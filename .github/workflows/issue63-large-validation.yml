@@ -116,10 +116,30 @@ jobs:
           echo "$podman_binary"
           if test "$podman_binary" != /usr/bin/podman; then
             [[ "$podman_binary" = /usr/local/bin/podman || "$podman_binary" =~ ^/home/linuxbrew/\.linuxbrew/Cellar/podman/[0-9]+(\.[0-9]+){2}(_[0-9]+)?/bin/podman$ ]] || { echo "Unexpected Podman binary: $podman_binary" >&2; exit 1; }
-            # Ubuntu's packaged userns allowance only attaches to /usr/bin/podman.
-            printf 'abi <abi/4.0>,\ninclude <tunables/global>\nprofile spaceapp-ci-podman %s flags=(unconfined) {\n  userns,\n}\n' "$podman_binary" | \
-              sudo tee /etc/apparmor.d/spaceapp-ci-podman > /dev/null
-            sudo apparmor_parser -r /etc/apparmor.d/spaceapp-ci-podman
+            apparmor_parameter=/sys/module/apparmor/parameters/enabled
+            if test -e "$apparmor_parameter"; then
+              test -r "$apparmor_parameter" || { echo "AppArmor parameter exists but is unreadable" >&2; exit 1; }
+              apparmor_enabled=$(cat "$apparmor_parameter")
+            else
+              echo "AppArmor kernel parameter absent"
+              apparmor_enabled=N
+            fi
+            printf 'AppArmor kernel state: %s\n' "$apparmor_enabled"
+            case "$apparmor_enabled" in
+              Y|y|1)
+                mountpoint -q /sys/kernel/security || sudo mount -t securityfs securityfs /sys/kernel/security
+                test "$(stat -fc %T /sys/kernel/security)" = securityfs
+                test -d /sys/kernel/security/apparmor
+                # Ubuntu's packaged userns allowance only attaches to /usr/bin/podman.
+                printf 'abi <abi/4.0>,\ninclude <tunables/global>\nprofile spaceapp-ci-podman %s flags=(unconfined) {\n  userns,\n}\n' "$podman_binary" | \
+                  sudo tee /etc/apparmor.d/spaceapp-ci-podman > /dev/null
+                sudo apparmor_parser -r /etc/apparmor.d/spaceapp-ci-podman
+                ;;
+              N|n|0)
+                echo "No active AppArmor kernel interface; no profile loaded or security setting changed"
+                ;;
+              *) echo "Unexpected AppArmor kernel state" >&2; exit 1 ;;
+            esac
             # Keep the provider's preinstalled Podman on its default OCI runtime.
             # Only a Homebrew installation needs the paired Homebrew crun override.
             if test "$podman_binary" != /usr/local/bin/podman; then
