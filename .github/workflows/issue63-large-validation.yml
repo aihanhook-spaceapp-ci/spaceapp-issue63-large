@@ -115,19 +115,23 @@ jobs:
           podman_binary=$(readlink -f "$(command -v podman)")
           echo "$podman_binary"
           if test "$podman_binary" != /usr/bin/podman; then
-            [[ "$podman_binary" =~ ^/home/linuxbrew/\.linuxbrew/Cellar/podman/[0-9]+(\.[0-9]+){2}(_[0-9]+)?/bin/podman$ ]] || { echo "Unexpected Podman binary: $podman_binary" >&2; exit 1; }
+            [[ "$podman_binary" = /usr/local/bin/podman || "$podman_binary" =~ ^/home/linuxbrew/\.linuxbrew/Cellar/podman/[0-9]+(\.[0-9]+){2}(_[0-9]+)?/bin/podman$ ]] || { echo "Unexpected Podman binary: $podman_binary" >&2; exit 1; }
             # Ubuntu's packaged userns allowance only attaches to /usr/bin/podman.
             printf 'abi <abi/4.0>,\ninclude <tunables/global>\nprofile spaceapp-ci-podman %s flags=(unconfined) {\n  userns,\n}\n' "$podman_binary" | \
               sudo tee /etc/apparmor.d/spaceapp-ci-podman > /dev/null
             sudo apparmor_parser -r /etc/apparmor.d/spaceapp-ci-podman
-            crun_binary=$(readlink -f "$(command -v crun)")
-            [[ "$crun_binary" =~ ^/home/linuxbrew/\.linuxbrew/Cellar/crun/[0-9]+(\.[0-9]+){1,2}(_[0-9]+)?/bin/crun$ ]] || { echo "Unexpected crun binary" >&2; exit 1; }
-            podman_config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/containers/containers.conf.d"
-            mkdir -p "$podman_config_dir"
-            test ! -e "$podman_config_dir/99-spaceapp-ci.conf"
-            # Keep the OCI runtime from the same installation as Podman.
-            printf '[engine]\nruntime = "crun"\n[engine.runtimes]\ncrun = ["%s"]\n' "$crun_binary" > "$podman_config_dir/99-spaceapp-ci.conf"
-            "$crun_binary" --version
+            # Keep the provider's preinstalled Podman on its default OCI runtime.
+            # Only a Homebrew installation needs the paired Homebrew crun override.
+            if test "$podman_binary" != /usr/local/bin/podman; then
+              crun_binary=$(readlink -f "$(command -v crun)")
+              [[ "$crun_binary" =~ ^/home/linuxbrew/\.linuxbrew/Cellar/crun/[0-9]+(\.[0-9]+){1,2}(_[0-9]+)?/bin/crun$ ]] || { echo "Unexpected crun binary" >&2; exit 1; }
+              podman_config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/containers/containers.conf.d"
+              mkdir -p "$podman_config_dir"
+              test ! -e "$podman_config_dir/99-spaceapp-ci.conf"
+              # Keep the OCI runtime from the same installation as Podman.
+              printf '[engine]\nruntime = "crun"\n[engine.runtimes]\ncrun = ["%s"]\n' "$crun_binary" > "$podman_config_dir/99-spaceapp-ci.conf"
+              "$crun_binary" --version
+            fi
           fi
           readlink -f "$(command -v pasta)"
           pasta --version
